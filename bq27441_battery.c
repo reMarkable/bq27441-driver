@@ -1271,7 +1271,9 @@ EXPORT_SYMBOL_GPL(bq27441_init);
 
 void bq27441_exit(struct bq27xxx_device_info *di)
 {
+#ifdef CONFIG_DEBUG_FS
 	debugfs_remove_recursive(zero_dir);
+#endif /* CONFIG_DEBUG_FS */
 }
 EXPORT_SYMBOL_GPL(bq27441_exit);
 
