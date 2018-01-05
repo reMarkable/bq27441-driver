@@ -841,111 +841,26 @@ static inline int toggle_gpout(struct bq27xxx_device_info *di)
 		dev_warn(di->dev, "Unable to start config mode, ret %d\n", ret);
 	}
 
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change block, ret %d\n", ret);
+	ret = read_extended_byte(di, 0x40, 0x00, 1);
+	if (ret < 0)
 		return ret;
-	}
-
-	usleep_range(100, 200);
-
-	old_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (old_csum < 0) {
-		dev_warn(di->dev, "Unable to read old checksum, ret %d\n", ret);
-		return old_csum;
-	}
-
-	ret = read_byte(di, BQ27441_OPCONFIG_2);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read opconfig byte 2, ret %d\n", ret);
-		return ret;
-	}
 
 	old_opconfig2 = (ret & 0xff);
 	opconfig2 = (old_opconfig2 & ~BQ27441_OPCONF_BATLOWEN);
 
-	ret = write_byte(di, BQ27441_OPCONFIG_2, opconfig2);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write opconfig 2 with temp config, ret %d\n", ret);
+	ret = write_extended_byte(di, 0x40, 0x00, 1, opconfig2);
+	if (ret < 0)
 		return ret;
-	}
-
-	/* Write opconfig block check sum */
-	temp_csum = (255 - old_csum - (old_opconfig2)) % 256;
-	new_csum = 255 - ((temp_csum + (opconfig2)) % 256);
-
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, new_csum);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write new checksum, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(10000, 20000);
-
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change block, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(100, 200);
-
-	temp_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (temp_csum < 0) {
-		dev_warn(di->dev, "Unable to read back checksum, ret %d", ret);
-		return temp_csum;
-	}
-
-	if (temp_csum != new_csum) {
-		dev_warn(di->dev, "Checksum readback mismatch, want %02x has %02x\n",
-				new_csum, temp_csum);
-		return -EIO;
-	}
 
 	/* Trigger pulse */
 	ret = control_write(di, BQ27441_PULSE_SOC_INT);
 	if (ret < 0)
 		dev_warn(di->dev, "Could not trigger interrupt pulse, ret %d\n", ret);
 
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change datablock to 0x0040, ret %d", ret);
-		return ret;
-	}
-
-	usleep_range(100, 200);
-
 	opconfig2 |= BQ27441_OPCONF_BATLOWEN;
-	ret = write_byte(di, BQ27441_OPCONFIG_2, opconfig2);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write opconfig byte 2 back to old value, ret %d\n", ret);
+	ret = write_extended_byte(di, 0x40, 0x00, 1, opconfig2);
+	if (ret < 0)
 		return ret;
-	}
-
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, old_csum);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write checksum back to old value, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(10000, 20000);
-
-	/* Verify check sum */
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read back checksum of old value, ret %d\n", ret);
-		return ret;
-	}
-
-	temp_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (temp_csum < 0)
-		return temp_csum;
-
-	if (temp_csum != old_csum) {
-		dev_warn(di->dev, "Checksum readback mismatch, want %02x has %02x\n",
-				new_csum, temp_csum);
-		return -EIO;
-	}
 
 	ret = config_mode_stop(di);
 	if (ret < 0)
