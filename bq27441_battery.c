@@ -13,6 +13,8 @@
 #include <linux/i2c.h>
 #include <linux/debugfs.h>
 
+#define CONFIG_VERSION 5
+
 #define BQ27441_CONTROL_STATUS  0x0000
 #define BQ27441_DEVICE_TYPE     0x0001
 #define BQ27441_FW_VERSION      0x0002
@@ -444,6 +446,23 @@ static inline int write_array(struct bq27xxx_device_info *di, int reg,
 	return ret;
 }
 
+static inline int control_read(struct bq27xxx_device_info *di, const u16 addr)
+{
+	int ret;
+	ret = write_word(di, BQ27441_CONTROL_1, addr);
+	if (ret < 0)
+		return ret;
+
+	usleep_range(100, 200);
+
+	return read_word(di, BQ27441_CONTROL_1);
+}
+
+static inline int control_write(struct bq27xxx_device_info *di, const u16 cmd)
+{
+	return write_word(di, BQ27441_CONTROL_1, cmd);
+}
+
 static inline int write_extended_cmd(struct bq27xxx_device_info *di,
 		const struct bq27441_extended_cmd *cmd)
 {
@@ -511,6 +530,79 @@ static inline int write_extended_cmd(struct bq27xxx_device_info *di,
 	return 0;
 }
 
+static inline int write_extended_byte(struct bq27xxx_device_info *di,
+		u8 dataclass, u8 datablock, u8 offset, u8 data)
+{
+	int ret;
+	u8 old_checksum;
+	u8 read_checksum;
+	u8 old_data;
+	int new_checksum;
+	int temp_checksum;
+	u8 dataclassblock[] = {dataclass, datablock};
+
+	if (offset >= 32)
+		return -EINVAL;
+
+	ret = write_array(di, BQ27441_DATA_BLOCK_CLASS, dataclassblock,
+			sizeof(dataclassblock));
+	if (ret < 0)
+		return ret;
+
+	usleep_range(1000, 2000);
+
+	ret = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
+	if (ret < 0)
+		return ret;
+
+	old_checksum = ret & 0xff;
+
+	ret = read_byte(di, 0x40 + offset);
+	if (ret < 0)
+		return ret;
+
+	old_data = ret & 0xff;
+
+	temp_checksum = (255 - old_checksum - old_data) % 256;
+	new_checksum = 255 - ((temp_checksum + data) % 256);
+
+	ret = write_byte(di, 0x40 + offset, data);
+	if (ret < 0)
+		return ret;
+
+	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, new_checksum);
+	if (ret < 0)
+		return ret;
+
+	usleep_range(10000, 11000);
+
+	ret = write_array(di, BQ27441_DATA_BLOCK_CLASS, dataclassblock,
+			sizeof(dataclassblock));
+	if (ret < 0)
+		return ret;
+
+	usleep_range(1000, 2000);
+
+	ret = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
+	if (ret < 0)
+		return ret;
+
+	read_checksum = ret & 0xFF;
+	if (read_checksum != new_checksum) {
+		dev_warn(di->dev,
+				"Failed to write to %02X-%02X (id: %u), checksum %02x read back %02x\n",
+				dataclass, datablock, dataclass,
+				new_checksum, read_checksum);
+		return -EINVAL;
+	}
+
+	dev_info(di->dev,
+			"Happily wrote to %02X-%02X (id: %u)\n",
+			dataclass, datablock, dataclass);
+
+	return 0;
+}
+
 static void of_bq27441_parse_platform_data(struct i2c_client *client,
 				struct bq27441_data *pdata)
 {
@@ -574,11 +666,7 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 
 	/* unseal the fuel gauge for data access if needed */
 
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_CONTROL_STATUS);
-	if (ret < 0)
-		return ret;
-
-	ret = read_word(di, BQ27441_CONTROL_1);
+	ret = control_read(di, BQ27441_CONTROL_STATUS);
 	if (ret < 0)
 		return ret;
 
@@ -586,11 +674,11 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 	control_status = ret;
 
 	if (control_status & 0x2000) {
-		ret = write_word(di, BQ27441_CONTROL_1, BQ27441_UNSEAL);
+		ret = control_write(di, BQ27441_UNSEAL);
 		if (ret < 0)
 			return ret;
 
-		ret = write_word(di, BQ27441_CONTROL_1, BQ27441_UNSEAL);
+		ret = control_write(di, BQ27441_UNSEAL);
 		if (ret < 0)
 			return ret;
 	}
@@ -599,18 +687,14 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 
 	usleep_range(1000, 2000);
 
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_CONTROL_STATUS);
-	if (ret < 0)
-		return ret;
-
-	ret = read_word(di, BQ27441_CONTROL_1);
+	ret = control_read(di, BQ27441_CONTROL_STATUS);
 	if (ret < 0)
 		return ret;
 
 	dev_info(di->dev, "Control status after seal: 0x%04x\n", ret);
 
 	/* Set fuel gauge in config mode */
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_SET_CFGUPDATE);
+	ret = control_write(di, BQ27441_SET_CFGUPDATE);
 	if (ret < 0)
 		return ret;
 
@@ -648,7 +732,7 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 	if (ret & BQ27441_FLAGS_CFGUPMODE) {
 		dev_info(di->dev, "Exiting config mode by soft reset\n");
 
-		ret = write_word(di, BQ27441_CONTROL_1, BQ27441_SOFT_RESET);
+		ret = control_write(di, BQ27441_SOFT_RESET);
 		if (ret < 0)
 			return ret;
 
@@ -671,7 +755,7 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 	}
 
 	/* seal the fuel gauge */
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_SEALED);
+	ret = control_write(di, BQ27441_SEALED);
 	if (ret < 0)
 		return ret;
 
@@ -790,7 +874,7 @@ static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
 	/* Verify check sum */
 	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
 	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read back checksum of old value\n", ret);
+		dev_warn(di->dev, "Unable to read back checksum of old value, ret %d\n", ret);
 		return ret;
 	}
 
@@ -896,7 +980,7 @@ static inline int toggle_gpout(struct bq27xxx_device_info *di)
 	}
 
 	/* Trigger pulse */
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_PULSE_SOC_INT);
+	ret = control_write(di, BQ27441_PULSE_SOC_INT);
 	if (ret < 0)
 		dev_warn(di->dev, "Could not trigger interrupt pulse, ret %d\n", ret);
 
@@ -917,7 +1001,7 @@ static inline int toggle_gpout(struct bq27xxx_device_info *di)
 
 	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, old_csum);
 	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write checksum back to old value\n", ret);
+		dev_warn(di->dev, "Unable to write checksum back to old value, ret %d\n", ret);
 		return ret;
 	}
 
@@ -926,7 +1010,7 @@ static inline int toggle_gpout(struct bq27xxx_device_info *di)
 	/* Verify check sum */
 	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
 	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read back checksum of old value\n", ret);
+		dev_warn(di->dev, "Unable to read back checksum of old value, ret %d\n", ret);
 		return ret;
 	}
 
@@ -1032,23 +1116,11 @@ static int check_fw_version(struct bq27xxx_device_info *di)
 	int device_type;
 	int fw_version;
 
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_DEVICE_TYPE);
-	if (ret < 0)
-		return ret;
-
-	usleep_range(100, 200);
-
-	device_type = read_word(di, BQ27441_CONTROL_1);
+	device_type = control_read(di, BQ27441_DEVICE_TYPE);
 	if (device_type < 0)
 		return device_type;
 
-	ret = write_word(di, BQ27441_CONTROL_1, BQ27441_FW_VERSION);
-	if (ret < 0)
-		return ret;
-
-	usleep_range(100, 200);
-
-	fw_version = read_word(di, BQ27441_CONTROL_1);
+	fw_version = control_read(di, BQ27441_FW_VERSION);
 	if (fw_version < 0)
 		return fw_version;
 
@@ -1069,7 +1141,7 @@ static int check_fw_version(struct bq27xxx_device_info *di)
 	return ret;
 }
 
-int bq27441_init(struct bq27xxx_device_info *di)
+static int configure(struct bq27xxx_device_info *di)
 {
 	int ret;
 	int checksum;
@@ -1080,41 +1152,41 @@ int bq27441_init(struct bq27xxx_device_info *di)
 	int flags_lsb;
 	int i;
 
-	struct bq27441_data bdata = {0, 0, 0, 0, 0, NULL};
-	struct i2c_client *client = to_i2c_client(di->dev);
-
-	of_bq27441_parse_platform_data(client, &bdata);
-
-	mutex_lock(&di->lock);
-
 	flags_lsb = read_byte(di, BQ27441_FLAGS);
 
-	if (check_fw_version(di) < 0)
-		goto fail;
-
-#ifdef CONFIG_DEBUG_FS
-	if (bq27441_create_debugfs(di) < 0)
-		dev_warn(di->dev, "Failed to create debugfs\n");
-#endif /* CONFIG_DEBUG_FS */
-
-	if (config_mode_start(di) < 0)
-		goto fail;
+	ret = config_mode_start(di);
+	if (ret < 0) {
+		dev_warn(di->dev, "Failed to enter config mode\n");
+		return ret;
+	}
 
 	/* Enable block mode */
-	if (write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00) < 0)
-		goto fail;
+	ret = write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00);
+	if (ret < 0) {
+		dev_warn(di->dev, "Failed to enter block mode\n");
+		return ret;
+	}
 
 	/* Dump configuration */
 	for (i = 0; i < ARRAY_SIZE(zerogravitas_golden_file); i++) {
-		write_extended_cmd(di, &zerogravitas_golden_file[i]);
+		ret = write_extended_cmd(di, &zerogravitas_golden_file[i]);
+		if (ret < 0)
+			return ret;
 	}
 
 	/* Read back stuff */
-	if (write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0052) < 0)
-		goto fail;
+	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0052);
+	if (ret < 0) {
+		dev_warn(di->dev, "Failed to read back data\n");
+		return ret;
+	}
 
 	usleep_range(1000, 2000);
 	checksum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
+	if (checksum < 0) {
+		dev_warn(di->dev, "Failed to read back data\n");
+		return ret;
+	}
 
 	/* read all the old values that we want to update */
 
@@ -1138,14 +1210,62 @@ int bq27441_init(struct bq27xxx_device_info *di)
 			(flags_lsb & BQ27441_FLAGS_ITPOR),
 			checksum);
 
-	ret = config_mode_stop(di);
-	mutex_unlock(&di->lock);
-	return ret;
+	ret = write_extended_byte(di, 0x40, 0x00, 3, CONFIG_VERSION);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to write BQ27441_DM_CODE, ret %d\n", ret);
+		return ret;
+	}
 
-fail:
-	dev_warn(di->dev, "Failed to initialize\n");
+	usleep_range(1000, 2000);
+	ret = control_read(di, BQ27441_DM_CODE);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to read back BQ27441_DM_CODE, ret %d\n", ret);
+		return ret;
+	}
+	dev_info(di->dev, "BQ27441_DM_CODE read back %04X\n", ret);
+
+	ret = config_mode_stop(di);
+	return ret;
+}
+
+int bq27441_init(struct bq27xxx_device_info *di)
+{
+	int ret;
+
+	struct bq27441_data bdata = {0, 0, 0, 0, 0, NULL};
+	struct i2c_client *client = to_i2c_client(di->dev);
+
+	of_bq27441_parse_platform_data(client, &bdata);
+
+	mutex_lock(&di->lock);
+
+	ret = check_fw_version(di);
+	if (ret < 0)
+		goto done;
+
+#ifdef CONFIG_DEBUG_FS
+	if (bq27441_create_debugfs(di) < 0)
+		dev_warn(di->dev, "Failed to create debugfs\n");
+#endif /* CONFIG_DEBUG_FS */
+
+	ret = control_read(di, BQ27441_DM_CODE);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to read BQ27441_DM_CODE, ret %d\n", ret);
+		goto done;
+	}
+	dev_info(di->dev, "Configuration version %d\n", ret);
+
+	if ((ret & 0xff) != CONFIG_VERSION) {
+		ret = configure(di);
+	}
+
+done:
 	mutex_unlock(&di->lock);
-	return -EIO;
+
+	if (ret < 0)
+		dev_warn(di->dev, "Failed to initialize\n");
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(bq27441_init);
 
