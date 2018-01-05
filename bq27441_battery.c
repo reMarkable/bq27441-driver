@@ -530,6 +530,25 @@ static inline int write_extended_cmd(struct bq27xxx_device_info *di,
 	return 0;
 }
 
+static inline int read_extended_byte(struct bq27xxx_device_info *di,
+		u8 dataclass, u8 datablock, u8 offset)
+{
+	int ret;
+	u8 dataclassblock[] = {dataclass, datablock};
+
+	if (offset >= 32)
+		return -EINVAL;
+
+	ret = write_array(di, BQ27441_DATA_BLOCK_CLASS, dataclassblock,
+			sizeof(dataclassblock));
+	if (ret < 0)
+		return ret;
+
+	usleep_range(1000, 2000);
+
+	return read_byte(di, 0x40 + offset);
+}
+
 static inline int write_extended_byte(struct bq27xxx_device_info *di,
 		u8 dataclass, u8 datablock, u8 offset, u8 data)
 {
@@ -716,6 +735,13 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 		usleep_range(1000, 2000);
 	}
 
+	/* Enable block mode */
+	ret = write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to enable block mode, ret %d\n", ret);
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -778,115 +804,19 @@ static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
 	ret = config_mode_start(di);
 	if (ret < 0) {
 		dev_warn(di->dev, "Unable to start config mode, ret %d\n", ret);
-	}
-
-	/* Enable block mode */
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to enable block mode, ret %d\n", ret);
 		return ret;
 	}
 
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change block, ret %d\n", ret);
+	ret = read_extended_byte(di, 0x40, 0x00, 0);
+	if (ret < 0)
 		return ret;
-	}
-
-	usleep_range(100, 200);
-
-	old_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (old_csum < 0) {
-		dev_warn(di->dev, "Unable to read old checksum, ret %d\n", ret);
-		return old_csum;
-	}
-
-	ret = read_byte(di, BQ27441_OPCONFIG_1);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read opconfig byte 1, ret %d\n", ret);
-		return ret;
-	}
 
 	old_opconfig1 = (ret & 0xff);
-	opconfig1 = (old_opconfig1 ^ BQ27441_OPCONF_GPIOPOL);
+	opconfig1 = old_opconfig1 ^ BQ27441_OPCONF_GPIOPOL;
 
-	ret = write_byte(di, BQ27441_OPCONFIG_1, opconfig1);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write opconfig 1 with temp config, ret %d\n", ret);
+	ret = write_extended_byte(di, 0x40, 0x00, 0, opconfig1);
+	if (ret < 0)
 		return ret;
-	}
-
-	/* Write opconfig block check sum */
-	temp_csum = (255 - old_csum - old_opconfig1) % 256;
-	new_csum = 255 - ((temp_csum + opconfig1) % 256);
-
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, new_csum);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write new checksum, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(10000, 20000);
-
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change block, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(100, 200);
-
-	temp_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (temp_csum < 0) {
-		dev_warn(di->dev, "Unable to read back checksum, ret %d", ret);
-		return temp_csum;
-	}
-
-	if (temp_csum != new_csum) {
-		dev_warn(di->dev, "Checksum readback mismatch, want %02x has %02x\n",
-				new_csum, temp_csum);
-		return -EIO;
-	}
-
-	/* Approx pulse length */
-	usleep_range(100000, 200000);
-
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to change block, ret %d\n", ret);
-		return ret;
-	}
-
-	ret = write_byte(di, BQ27441_OPCONFIG_1, old_opconfig1);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write opconfig byte 1 back to old value, ret %d\n", ret);
-		return ret;
-	}
-
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CHECKSUM, old_csum);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to write checksum back to old value, ret %d\n", ret);
-		return ret;
-	}
-
-	usleep_range(10000, 20000);
-
-	/* Verify check sum */
-	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to read back checksum of old value, ret %d\n", ret);
-		return ret;
-	}
-
-	temp_csum = read_byte(di, BQ27441_BLOCK_DATA_CHECKSUM);
-	if (temp_csum < 0)
-		return temp_csum;
-
-	if (temp_csum != old_csum) {
-		dev_warn(di->dev, "Checksum readback mismatch, want %02x has %02x\n",
-				new_csum, temp_csum);
-		return -EIO;
-	}
 
 	ret = config_mode_stop(di);
 	if (ret < 0)
@@ -909,13 +839,6 @@ static inline int toggle_gpout(struct bq27xxx_device_info *di)
 	ret = config_mode_start(di);
 	if (ret < 0) {
 		dev_warn(di->dev, "Unable to start config mode, ret %d\n", ret);
-	}
-
-	/* Enable block mode */
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to enable block mode, ret %d\n", ret);
-		return ret;
 	}
 
 	ret = write_word(di, BQ27441_DATA_BLOCK_CLASS, 0x0040);
@@ -1157,13 +1080,6 @@ static int configure(struct bq27xxx_device_info *di)
 	ret = config_mode_start(di);
 	if (ret < 0) {
 		dev_warn(di->dev, "Failed to enter config mode\n");
-		return ret;
-	}
-
-	/* Enable block mode */
-	ret = write_byte(di, BQ27441_BLOCK_DATA_CONTROL, 0x00);
-	if (ret < 0) {
-		dev_warn(di->dev, "Failed to enter block mode\n");
 		return ret;
 	}
 
