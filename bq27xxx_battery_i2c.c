@@ -22,7 +22,7 @@
 
 #include <linux/string.h>
 
-#include <linux/power/bq27xxx_battery.h>
+#include "bq27xxx_battery.h"
 
 static irqreturn_t bq27xxx_battery_irq_handler_thread(int irq, void *data)
 {

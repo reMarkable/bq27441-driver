@@ -8,10 +8,10 @@
 #include <linux/power_supply.h>
 #include <linux/slab.h>
 #include <linux/of.h>
-#include <linux/power/bq27xxx_battery.h>
 
-#include <linux/i2c.h>
 #include <linux/debugfs.h>
+
+#include "bq27xxx_battery.h"
 
 #define CONFIG_VERSION 5
 

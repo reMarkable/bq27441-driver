@@ -48,8 +48,7 @@
 #include <linux/slab.h>
 #include <linux/of.h>
 
-#include <linux/power/bq27xxx_battery.h>
-
+#include "bq27xxx_battery.h"
 #include "bq27441_battery.h"
 
 #define DRIVER_VERSION		"1.2.0"
