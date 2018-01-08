@@ -81,15 +81,6 @@
 
 #define BQ27441_MAX_REGS 0x7F
 
-static struct bq27441_data {
-	unsigned long full_capacity; /* in mAh */
-	unsigned long full_energy; /* in mWh */
-	unsigned long taper_rate;
-	unsigned long terminate_voltage; /* in mV */
-	unsigned long v_at_chg_term; /* in mV */
-	const char *tz_name;
-};
-
 static struct bq27441_extended_cmd {
 	u8 datablock[2];
 	u8 command[32];
@@ -622,48 +613,6 @@ static inline int write_extended_byte(struct bq27xxx_device_info *di,
 	return 0;
 }
 
-static void of_bq27441_parse_platform_data(struct i2c_client *client,
-				struct bq27441_data *pdata)
-{
-	u32 tmp;
-	char const *pstr;
-	struct device_node *np = client->dev.of_node;
-
-	if (!of_property_read_u32(np, "design-capacity", &tmp))
-		pdata->full_capacity = (unsigned long)tmp;
-
-	if (!of_property_read_u32(np, "design-energy", &tmp))
-		pdata->full_energy = (unsigned long)tmp;
-
-	if (!of_property_read_u32(np, "taper-rate", &tmp))
-		pdata->taper_rate = (unsigned long)tmp;
-
-	if (!of_property_read_u32(np, "terminate-voltage", &tmp))
-		pdata->terminate_voltage = (unsigned long)tmp;
-
-	if (!of_property_read_u32(np, "v-at-chg-term", &tmp))
-		pdata->v_at_chg_term = (unsigned long)tmp;
-
-	if (!of_property_read_string(np, "tz-name", &pstr))
-		pdata->tz_name = pstr;
-	else
-		dev_err(&client->dev, "Failed to read tz-name\n");
-
-	dev_info(&client->dev, "Read device tree, got:\n"
-			"    design-capacity %lu mAh\n"
-			"    design-energy %lu mW\n"
-			"    taper-rate %lu\n"
-			"    terminate-voltage %lu mV\n"
-			"    v-at-chg-term %lu mV\n"
-			"    tz-name \"%s\"\n",
-			pdata->full_capacity,
-			pdata->full_energy,
-			pdata->taper_rate,
-			pdata->terminate_voltage,
-			pdata->v_at_chg_term,
-			pdata->tz_name);
-}
-
 static inline int config_mode_start(struct bq27xxx_device_info *di)
 {
 	int ret;
@@ -1062,11 +1011,6 @@ static int configure(struct bq27xxx_device_info *di)
 int bq27441_init(struct bq27xxx_device_info *di)
 {
 	int ret;
-
-	struct bq27441_data bdata = {0, 0, 0, 0, 0, NULL};
-	struct i2c_client *client = to_i2c_client(di->dev);
-
-	of_bq27441_parse_platform_data(client, &bdata);
 
 	mutex_lock(&di->lock);
 
