@@ -631,74 +631,7 @@ static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
 	return 0;
 }
 
-static inline int toggle_gpout(struct bq27xxx_device_info *di)
-{
-	int ret;
-	int old_csum;
-	int new_csum;
-	int temp_csum;
-	u8 opconfig2;
-	u8 old_opconfig2;
-
-	dev_info(di->dev, "toggle_gpout triggered\n");
-
-	ret = config_mode_start(di);
-	if (ret < 0) {
-		dev_warn(di->dev, "Unable to start config mode, ret %d\n", ret);
-	}
-
-	ret = read_extended_byte(di, 0x40, 0x00, 1);
-	if (ret < 0)
-		return ret;
-
-	old_opconfig2 = (ret & 0xff);
-	opconfig2 = (old_opconfig2 & ~BQ27441_OPCONF_BATLOWEN);
-
-	ret = write_extended_byte(di, 0x40, 0x00, 1, opconfig2);
-	if (ret < 0)
-		return ret;
-
-	/* Trigger pulse */
-	ret = control_write(di, BQ27441_PULSE_SOC_INT);
-	if (ret < 0)
-		dev_warn(di->dev, "Could not trigger interrupt pulse, ret %d\n", ret);
-
-	opconfig2 |= BQ27441_OPCONF_BATLOWEN;
-	ret = write_extended_byte(di, 0x40, 0x00, 1, opconfig2);
-	if (ret < 0)
-		return ret;
-
-	ret = config_mode_stop(di);
-	if (ret < 0)
-		return ret;
-
-	return 0;
-}
-
-struct dentry *zero_dir, *toggle_file, *polarity_file;
-
-static ssize_t toggle_gpout_debugfs(struct file *fp, const char __user *userbuf,
-                                size_t count, loff_t *offset)
-{
-	int ret;
-	struct bq27xxx_device_info *di = fp->private_data;
-
-	if (!di)
-		return -EIO;
-
-	if (count < 1 || userbuf[0] != '1') {
-		return -EINVAL;
-	}
-
-	mutex_lock(&di->lock);
-	ret = toggle_gpout(di);
-	mutex_unlock(&di->lock);
-
-	if (ret >= 0)
-		return count;
-	else
-		return ret;
-}
+struct dentry *zero_dir, *polarity_file;
 
 static ssize_t toggle_polarity_debugfs(struct file *fp, const char __user *userbuf,
                                 size_t count, loff_t *offset)
@@ -729,17 +662,9 @@ static const struct file_operations polarity_fops = {
 		.owner = THIS_MODULE,
 };
 
-static const struct file_operations toggle_fops = {
-		.open = simple_open,
-		.write = toggle_gpout_debugfs,
-		.owner = THIS_MODULE,
-};
-
 static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 {
 	zero_dir = debugfs_create_dir("zero-gravitas", NULL);
-	toggle_file = debugfs_create_file("toggle_gpout",
-			S_IWUGO, zero_dir, di, &toggle_fops);
 	polarity_file = debugfs_create_file("bq27441_toggle_polarity",
 			S_IWUGO, zero_dir, di, &polarity_fops);
 
