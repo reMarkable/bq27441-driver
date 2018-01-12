@@ -596,16 +596,26 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 
 #ifdef CONFIG_DEBUG_FS
 
-static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
+static inline int get_gpiopol(struct bq27xxx_device_info *di)
 {
 	int ret;
-	int old_csum;
-	int new_csum;
-	int temp_csum;
+
+	ret = read_byte(di, 0x3b);
+	if (ret < 0)
+		return ret;
+
+	dev_info(di->dev, "%s triggered, opconfig_h(0x3b): 0x%02x\n", __func__, ret);
+
+	return (ret & BQ27441_OPCONF_GPIOPOL);
+}
+
+static inline int set_gpiopol(struct bq27xxx_device_info *di, bool status)
+{
+	int ret;
 	u8 opconfig1;
 	u8 old_opconfig1;
 
-	dev_info(di->dev, "bq27441_toggle_gpiopol triggered\n");
+	dev_info(di->dev, "set_gpiopol triggered\n");
 
 	ret = config_mode_start(di);
 	if (ret < 0) {
@@ -618,7 +628,11 @@ static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
 		return ret;
 
 	old_opconfig1 = (ret & 0xff);
-	opconfig1 = old_opconfig1 ^ BQ27441_OPCONF_GPIOPOL;
+
+	if (status)
+		opconfig1 = old_opconfig1 | BQ27441_OPCONF_GPIOPOL;
+	else
+		opconfig1 = (old_opconfig1 & ~BQ27441_OPCONF_GPIOPOL);
 
 	ret = write_extended_byte(di, 0x40, 0x00, 0, opconfig1);
 	if (ret < 0)
@@ -633,21 +647,28 @@ static inline int toggle_gpiopol(struct bq27xxx_device_info *di)
 
 struct dentry *zero_dir, *polarity_file;
 
-static ssize_t toggle_polarity_debugfs(struct file *fp, const char __user *userbuf,
-                                size_t count, loff_t *offset)
+static ssize_t polarity_debugfs_store(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset)
 {
 	int ret;
+	bool status;
 	struct bq27xxx_device_info *di = fp->private_data;
 
 	if (!di)
 		return -EIO;
 
-	if (count < 1 || userbuf[0] != '1') {
+	if (count < 1)
 		return -EINVAL;
-	}
+
+	if (userbuf[0] == '1')
+		status = true;
+	else if (userbuf[0] == '0')
+		status = false;
+	else
+		return -EINVAL;
 
 	mutex_lock(&di->lock);
-	ret = toggle_gpiopol(di);
+	ret = set_gpiopol(di, status);
 	mutex_unlock(&di->lock);
 
 	if (ret >= 0)
@@ -656,16 +677,47 @@ static ssize_t toggle_polarity_debugfs(struct file *fp, const char __user *userb
 		return ret;
 }
 
+static ssize_t polarity_debugfs_show(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	int ret;
+	int polarity;
+	struct bq27xxx_device_info *di = fp->private_data;
+
+	dev_info(di->dev, "polarity_debugfs_show count %zu\n", count);
+
+	char buf[4] = {0};
+
+	if (!di)
+		return -EIO;
+
+	mutex_lock(&di->lock);
+	ret = get_gpiopol(di);
+	mutex_unlock(&di->lock);
+
+	if (ret < 0)
+		return ret;
+
+	polarity = ret;
+
+	ret = scnprintf(buf, sizeof(buf) - 1, "%c\n", polarity ? '1' : '0');
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
+}
+
 static const struct file_operations polarity_fops = {
 		.open = simple_open,
-		.write = toggle_polarity_debugfs,
+		.write = polarity_debugfs_store,
+		.read = polarity_debugfs_show,
 		.owner = THIS_MODULE,
 };
 
 static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 {
 	zero_dir = debugfs_create_dir("zero-gravitas", NULL);
-	polarity_file = debugfs_create_file("bq27441_toggle_polarity",
+	polarity_file = debugfs_create_file("bq27441_gpol_polarity",
 			S_IWUGO, zero_dir, di, &polarity_fops);
 
 	return 0;
