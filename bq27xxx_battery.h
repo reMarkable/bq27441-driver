@@ -48,6 +48,8 @@ struct bq27xxx_reg_cache {
 	int health;
 };
 
+struct dentry;
+
 struct bq27xxx_device_info {
 	struct device *dev;
 	enum bq27xxx_chip chip;
@@ -60,6 +62,8 @@ struct bq27xxx_device_info {
 	struct power_supply *bat;
 	struct mutex lock;
 	u8 *regs;
+	struct dentry *dfs_dir;
+	struct dentry *dfs_polarity_file;
 };
 
 void bq27xxx_battery_update(struct bq27xxx_device_info *di);

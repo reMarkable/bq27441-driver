@@ -644,8 +644,6 @@ static inline int set_gpiopol(struct bq27xxx_device_info *di, bool status)
 	return 0;
 }
 
-struct dentry *zero_dir, *polarity_file;
-
 static ssize_t polarity_debugfs_store(struct file *fp, const char __user *userbuf,
 		size_t count, loff_t *offset)
 {
@@ -715,9 +713,9 @@ static const struct file_operations polarity_fops = {
 
 static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 {
-	zero_dir = debugfs_create_dir("zero-gravitas", NULL);
-	polarity_file = debugfs_create_file("bq27441_gpol_polarity",
-			S_IWUGO, zero_dir, di, &polarity_fops);
+	di->dfs_dir = debugfs_create_dir("bq27441", NULL);
+	di->dfs_polarity_file = debugfs_create_file("lowBat_polarity",
+			S_IWUGO, di->dfs_dir, di, &polarity_fops);
 
 	return 0;
 }
@@ -880,7 +878,7 @@ EXPORT_SYMBOL_GPL(bq27441_init);
 void bq27441_exit(struct bq27xxx_device_info *di)
 {
 #ifdef CONFIG_DEBUG_FS
-	debugfs_remove_recursive(zero_dir);
+	debugfs_remove_recursive(di->dfs_dir);
 #endif /* CONFIG_DEBUG_FS */
 }
 EXPORT_SYMBOL_GPL(bq27441_exit);
