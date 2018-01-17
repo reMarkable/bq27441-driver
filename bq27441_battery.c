@@ -842,6 +842,7 @@ static int configure(struct bq27xxx_device_info *di)
 int bq27441_init(struct bq27xxx_device_info *di)
 {
 	int ret;
+	bool itpor;
 
 	mutex_lock(&di->lock);
 
@@ -854,6 +855,14 @@ int bq27441_init(struct bq27xxx_device_info *di)
 		dev_warn(di->dev, "Failed to create debugfs\n");
 #endif /* CONFIG_DEBUG_FS */
 
+	ret = read_byte(di, BQ27441_FLAGS);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to read BQ27441_FLAGS, ret %d\n", ret);
+		goto done;
+	}
+	itpor = (ret & BQ27441_FLAGS_ITPOR);
+	dev_info(di->dev, "ITPOR bit: %c", itpor ? '1' : '0');
+
 	ret = control_read(di, BQ27441_DM_CODE);
 	if (ret < 0) {
 		dev_warn(di->dev, "Unable to read BQ27441_DM_CODE, ret %d\n", ret);
@@ -861,7 +870,7 @@ int bq27441_init(struct bq27xxx_device_info *di)
 	}
 	dev_info(di->dev, "Configuration version %d\n", ret);
 
-	if ((ret & 0xff) != CONFIG_VERSION) {
+	if ((ret & 0xff) != CONFIG_VERSION || itpor) {
 		ret = configure(di);
 	}
 
