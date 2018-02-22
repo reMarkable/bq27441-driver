@@ -614,16 +614,21 @@ static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset);
 
 static struct fsfile fsfiles[] = {
-		{.name = "FullAvailableCap",       .reg = 0x0A, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "RemainingCapacity",      .reg = 0x0C, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "StandbyCurrent",         .reg = 0x12, .fops = FSFOPS(debugfs_show_s16)},
-		{.name = "MaxLoadCurrent",         .reg = 0x14, .fops = FSFOPS(debugfs_show_s16)},
-		{.name = "AveragePower",           .reg = 0x18, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "InternalTemperature",    .reg = 0x1E, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "StateOfHealth",          .reg = 0x20, .fops = FSFOPS(debugfs_show_u8)},
-		{.name = "StateOfHealthStatus",    .reg = 0x21, .fops = FSFOPS(debugfs_show_u8hex)},
-		{.name = "RemainingCapUnfiltered", .reg = 0x28, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "RemainingCapFiltered",   .reg = 0x2A, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "FullAvailableCap",        .reg = 0x0A, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "RemainingCapacity",       .reg = 0x0C, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "StandbyCurrent",          .reg = 0x12, .fops = FSFOPS(debugfs_show_s16)},
+		{.name = "MaxLoadCurrent",          .reg = 0x14, .fops = FSFOPS(debugfs_show_s16)},
+		{.name = "AveragePower",            .reg = 0x18, .fops = FSFOPS(debugfs_show_s16)},
+		{.name = "InternalTemperature",     .reg = 0x1E, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "StateOfHealth",           .reg = 0x20, .fops = FSFOPS(debugfs_show_u8)},
+		{.name = "StateOfHealthStatus",     .reg = 0x21, .fops = FSFOPS(debugfs_show_u8hex)},
+		{.name = "RemainingCapUnfiltered",  .reg = 0x28, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "RemainingCapFiltered",    .reg = 0x2A, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "FullChargeCapUnfiltered", .reg = 0x2C, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "FullChargeCapFiltered",   .reg = 0x2E, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "StateOfChargeUnfiltered", .reg = 0x30, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "OpConfig_0",              .reg = 0x3A, .fops = FSFOPS(debugfs_show_u8hex)},
+		{.name = "OpConfig_1",              .reg = 0x3B, .fops = FSFOPS(debugfs_show_u8hex)},
 };
 
 inline static int get_fsfile_match(const char *name)
