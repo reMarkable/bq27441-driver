@@ -595,6 +595,147 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 
 #ifdef CONFIG_DEBUG_FS
 
+static struct fsfile {
+	const char *name;
+	unsigned char reg;
+	struct file_operations fops;
+};
+
+#define FSFOPS(readfunc) \
+	{.open = simple_open, .write = NULL, .read = readfunc, .owner = THIS_MODULE}
+
+static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_show_u8(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+
+static struct fsfile fsfiles[] = {
+		{.name = "FullAvailableCap",       .reg = 0x0A, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "RemainingCapacity",      .reg = 0x0C, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "StandbyCurrent",         .reg = 0x12, .fops = FSFOPS(debugfs_show_s16)},
+		{.name = "MaxLoadCurrent",         .reg = 0x14, .fops = FSFOPS(debugfs_show_s16)},
+		{.name = "AveragePower",           .reg = 0x18, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "InternalTemperature",    .reg = 0x1E, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "StateOfHealth",          .reg = 0x20, .fops = FSFOPS(debugfs_show_u8)},
+		{.name = "StateOfHealthStatus",    .reg = 0x21, .fops = FSFOPS(debugfs_show_u8hex)},
+		{.name = "RemainingCapUnfiltered", .reg = 0x28, .fops = FSFOPS(debugfs_show_u16)},
+		{.name = "RemainingCapFiltered",   .reg = 0x2A, .fops = FSFOPS(debugfs_show_u16)},
+};
+
+inline static int get_fsfile_match(const char *name)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(fsfiles); i++) {
+		if (!strcmp(fsfiles[i].name, name)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	int ret;
+	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[8] = {0};
+	int index;
+	s16 theword;
+
+	if (!di)
+		return -EIO;
+
+	index = get_fsfile_match(fp->f_path.dentry->d_iname);
+	if (index < 0)
+		return -EINVAL;
+
+	ret = read_word(di, fsfiles[index].reg);
+	if (ret < 0)
+		return ret;
+
+	theword = (s16)(ret & 0xFFFF);
+
+	ret = scnprintf(buf, sizeof(buf) - 1, "%d\n", theword);
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+}
+
+static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	int ret;
+	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[8] = {0};
+	int index;
+	u16 theword;
+
+	if (!di)
+		return -EIO;
+
+	index = get_fsfile_match(fp->f_path.dentry->d_iname);
+	if (index < 0)
+		return -EINVAL;
+
+	ret = read_word(di, fsfiles[index].reg);
+	if (ret < 0)
+		return ret;
+
+	theword = (ret & 0xFFFF);
+
+	ret = scnprintf(buf, sizeof(buf) - 1, "%u\n", theword);
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+}
+
+static ssize_t debugfs_show_u8_mode(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset, bool hex)
+{
+	int ret;
+	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[8] = {0};
+	int index;
+	unsigned char thebyte;
+
+	if (!di)
+		return -EIO;
+
+	index = get_fsfile_match(fp->f_path.dentry->d_iname);
+	if (index < 0)
+		return -EINVAL;
+
+	ret = read_byte(di, fsfiles[index].reg);
+	if (ret < 0)
+		return ret;
+
+	thebyte = (ret & 0xFF);
+	ret = scnprintf(buf, sizeof(buf) - 1, hex ? "0x%02X\n" : "%u\n", thebyte);
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+}
+
+static ssize_t debugfs_show_u8(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_show_u8_mode(fp, userbuf, count, offset, false);
+}
+
+static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_show_u8_mode(fp, userbuf, count, offset, true);
+}
+
 static inline int get_gpiopol(struct bq27xxx_device_info *di)
 {
 	int ret;
@@ -680,10 +821,9 @@ static ssize_t polarity_debugfs_show(struct file *fp, char __user *userbuf,
 	int ret;
 	int polarity;
 	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[4] = {0};
 
 	dev_info(di->dev, "polarity_debugfs_show count %zu\n", count);
-
-	char buf[4] = {0};
 
 	if (!di)
 		return -EIO;
@@ -713,9 +853,15 @@ static const struct file_operations polarity_fops = {
 
 static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 {
+	int i;
+
 	di->dfs_dir = debugfs_create_dir("bq27441", NULL);
 	di->dfs_polarity_file = debugfs_create_file("lowBat_polarity",
 			S_IWUGO, di->dfs_dir, di, &polarity_fops);
+
+	for (i = 0; i < ARRAY_SIZE(fsfiles); i++) {
+		debugfs_create_file(fsfiles[i].name, S_IRUGO, di->dfs_dir, di, &fsfiles[i].fops);
+	}
 
 	return 0;
 }
