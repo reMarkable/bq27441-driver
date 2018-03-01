@@ -500,7 +500,7 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 	if (ret < 0)
 		return ret;
 
-	dev_info(di->dev, "Control status before seal: 0x%04x\n", ret);
+	dev_info(di->dev, "Control status before unseal: 0x%04x\n", ret);
 	control_status = ret;
 
 	if (control_status & 0x2000) {
@@ -537,7 +537,7 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 			return ret;
 
 		flags_lsb = (ret & BQ27441_FLAGS_CFGUPMODE);
-		dev_warn(di->dev, "flags_lsb %02x ret %02x\n", flags_lsb, ret);
+		dev_info(di->dev, "flags_lsb %02x ret %02x\n", flags_lsb, ret);
 
 		if (time_after(jiffies, timeout)) {
 			dev_warn(di->dev, "Timeout waiting for cfg update\n");
