@@ -377,14 +377,12 @@ static inline int write_extended_cmd(struct bq27xxx_device_info *di,
 	return 0;
 }
 
-static inline int read_extended_byte(struct bq27xxx_device_info *di,
-		u8 dataclass, u8 datablock, u8 offset)
+static inline int read_extended_byteorword(struct bq27xxx_device_info *di,
+		u8 dataclass, u8 offset, bool single)
 {
 	int ret;
+	u8 datablock = offset / 32;
 	u8 dataclassblock[] = {dataclass, datablock};
-
-	if (offset >= 32)
-		return -EINVAL;
 
 	ret = write_array(di, BQ27441_DATA_BLOCK_CLASS, dataclassblock,
 			sizeof(dataclassblock));
@@ -393,22 +391,28 @@ static inline int read_extended_byte(struct bq27xxx_device_info *di,
 
 	usleep_range(1000, 2000);
 
-	return read_byte(di, 0x40 + offset);
+	ret = di->bus.read(di, 0x40 + offset % 32, single);
+	if (ret < 0)
+		return ret;
+
+	if (single)
+		return (ret & 0xff);
+	else
+		return ( ((ret & 0xff) << 8) | ((ret & 0xff00) >> 8) );
 }
 
-static inline int write_extended_byte(struct bq27xxx_device_info *di,
-		u8 dataclass, u8 datablock, u8 offset, u8 data)
+static inline int write_extended_byteorword(struct bq27xxx_device_info *di,
+		u8 dataclass, u8 offset, const u8 *data, bool single)
 {
 	int ret;
 	u8 old_checksum;
 	u8 read_checksum;
-	u8 old_data;
+	u8 old_data[2];
+	u8 new_data[2] = {data[0], single ? 0 : data[1]};
 	int new_checksum;
 	int temp_checksum;
+	u8 datablock = offset / 32;
 	u8 dataclassblock[] = {dataclass, datablock};
-
-	if (offset >= 32)
-		return -EINVAL;
 
 	ret = write_array(di, BQ27441_DATA_BLOCK_CLASS, dataclassblock,
 			sizeof(dataclassblock));
@@ -423,16 +427,18 @@ static inline int write_extended_byte(struct bq27xxx_device_info *di,
 
 	old_checksum = ret & 0xff;
 
-	ret = read_byte(di, 0x40 + offset);
+	ret = di->bus.read(di, 0x40 + offset % 32, single);
 	if (ret < 0)
 		return ret;
 
-	old_data = ret & 0xff;
+	old_data[0] = ret & 0xff;
+	old_data[1] = single ? 0 : ((ret & 0xff00) >> 8);
 
-	temp_checksum = (255 - old_checksum - old_data) % 256;
-	new_checksum = 255 - ((temp_checksum + data) % 256);
+	temp_checksum = (255 - old_checksum - old_data[0] - old_data[1]) % 256;
+	new_checksum = 255 - ((temp_checksum + new_data[0] + new_data[1]) % 256);
+	new_checksum &= 0xFF;
 
-	ret = write_byte(di, 0x40 + offset, data);
+	ret = write_array(di, 0x40 + offset % 32, new_data, single ? 1 : 2);
 	if (ret < 0)
 		return ret;
 
@@ -515,7 +521,7 @@ static inline int config_mode_start(struct bq27xxx_device_info *di)
 	if (ret < 0)
 		return ret;
 
-	dev_info(di->dev, "Control status after seal: 0x%04x\n", ret);
+	dev_info(di->dev, "Control status after unseal: 0x%04x\n", ret);
 
 	/* Set fuel gauge in config mode */
 	ret = control_write(di, BQ27441_SET_CFGUPDATE);
@@ -597,14 +603,28 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 
 #ifdef CONFIG_DEBUG_FS
 
-static struct fsfile {
+struct fsfile {
 	const char *name;
 	unsigned char reg;
+	unsigned char dataclass;
 	struct file_operations fops;
+	mode_t mode;
 };
 
-#define FSFOPS(readfunc) \
-	{.open = simple_open, .write = NULL, .read = readfunc, .owner = THIS_MODULE}
+#define FSFOPS_R(readfunc) \
+	.fops = {.open = simple_open, .write = NULL, .read = readfunc, .owner = THIS_MODULE}, .mode = S_IRUGO
+
+#define FSFOPS_RW(readfunc, writefunc) \
+	.fops = {.open = simple_open, .write = writefunc, .read = readfunc, .owner = THIS_MODULE}, .mode = (S_IRUGO | S_IWUGO)
+
+static ssize_t debugfs_show_ext_u16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_store_ext_u16(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_show_ext_u8(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_store_ext_u8(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset);
 
 static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset);
@@ -615,22 +635,33 @@ static ssize_t debugfs_show_u8(struct file *fp, char __user *userbuf,
 static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset);
 
-static struct fsfile fsfiles[] = {
-		{.name = "FullAvailableCap",        .reg = 0x0A, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "RemainingCapacity",       .reg = 0x0C, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "StandbyCurrent",          .reg = 0x12, .fops = FSFOPS(debugfs_show_s16)},
-		{.name = "MaxLoadCurrent",          .reg = 0x14, .fops = FSFOPS(debugfs_show_s16)},
-		{.name = "AveragePower",            .reg = 0x18, .fops = FSFOPS(debugfs_show_s16)},
-		{.name = "InternalTemperature",     .reg = 0x1E, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "StateOfHealth",           .reg = 0x20, .fops = FSFOPS(debugfs_show_u8)},
-		{.name = "StateOfHealthStatus",     .reg = 0x21, .fops = FSFOPS(debugfs_show_u8hex)},
-		{.name = "RemainingCapUnfiltered",  .reg = 0x28, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "RemainingCapFiltered",    .reg = 0x2A, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "FullChargeCapUnfiltered", .reg = 0x2C, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "FullChargeCapFiltered",   .reg = 0x2E, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "StateOfChargeUnfiltered", .reg = 0x30, .fops = FSFOPS(debugfs_show_u16)},
-		{.name = "OpConfig_0",              .reg = 0x3A, .fops = FSFOPS(debugfs_show_u8hex)},
-		{.name = "OpConfig_1",              .reg = 0x3B, .fops = FSFOPS(debugfs_show_u8hex)},
+static const struct fsfile fsfiles[] = {
+		{.name = "FullAvailableCap",        .reg = 0x0A, FSFOPS_R(debugfs_show_u16)},
+		{.name = "RemainingCapacity",       .reg = 0x0C, FSFOPS_R(debugfs_show_u16)},
+		{.name = "StandbyCurrent",          .reg = 0x12, FSFOPS_R(debugfs_show_s16)},
+		{.name = "MaxLoadCurrent",          .reg = 0x14, FSFOPS_R(debugfs_show_s16)},
+		{.name = "AveragePower",            .reg = 0x18, FSFOPS_R(debugfs_show_s16)},
+		{.name = "InternalTemperature",     .reg = 0x1E, FSFOPS_R(debugfs_show_u16)},
+		{.name = "StateOfHealth",           .reg = 0x20, FSFOPS_R(debugfs_show_u8)},
+		{.name = "StateOfHealthStatus",     .reg = 0x21, FSFOPS_R(debugfs_show_u8hex)},
+		{.name = "RemainingCapUnfiltered",  .reg = 0x28, FSFOPS_R(debugfs_show_u16)},
+		{.name = "RemainingCapFiltered",    .reg = 0x2A, FSFOPS_R(debugfs_show_u16)},
+		{.name = "FullChargeCapUnfiltered", .reg = 0x2C, FSFOPS_R(debugfs_show_u16)},
+		{.name = "FullChargeCapFiltered",   .reg = 0x2E, FSFOPS_R(debugfs_show_u16)},
+		{.name = "StateOfChargeUnfiltered", .reg = 0x30, FSFOPS_R(debugfs_show_u16)},
+		{.name = "OpConfig_0",              .reg = 0x3A, FSFOPS_R(debugfs_show_u8hex)},
+		{.name = "OpConfig_1",              .reg = 0x3B, FSFOPS_R(debugfs_show_u8hex)},
+
+		/* Extended */
+		{.name = "SOC1SetThreshold",   .reg =  0, .dataclass = 49, FSFOPS_RW(debugfs_show_ext_u8, debugfs_store_ext_u8)},
+		{.name = "SOC1ClearThreshold", .reg =  1, .dataclass = 49, FSFOPS_RW(debugfs_show_ext_u8, debugfs_store_ext_u8)},
+		{.name = "DMCode",             .reg =  3, .dataclass = 64, FSFOPS_RW(debugfs_show_ext_u8, debugfs_store_ext_u8)},
+		{.name = "MinDeltaVoltage",    .reg = 72, .dataclass = 80, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "MaxDeltaVoltage",    .reg = 74, .dataclass = 80, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "QMaxCell0",          .reg =  0, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "TerminateVoltage",   .reg = 16, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "VatChgTerm",         .reg = 33, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "DeltaVoltage",       .reg = 39, .dataclass = 82, FSFOPS_R(debugfs_show_ext_u16)},
 };
 
 inline static int get_fsfile_match(const char *name)
@@ -642,7 +673,109 @@ inline static int get_fsfile_match(const char *name)
 			return i;
 		}
 	}
-	return -1;
+	return -EINVAL;
+}
+
+static ssize_t debugfs_show_ext_byteorword(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset, bool single)
+{
+	int ret;
+	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[8] = {0};
+	int index;
+	u16 mask;
+
+	if (!di)
+		return -EIO;
+
+	index = get_fsfile_match(fp->f_path.dentry->d_iname);
+	if (index < 0)
+		return index;
+
+	dev_info(di->dev, "%s: \"%s\", dataclass %u offset %u\n", __func__,
+			fsfiles[index].name, fsfiles[index].dataclass, fsfiles[index].reg);
+
+	mutex_lock(&di->lock);
+	ret = read_extended_byteorword(di, fsfiles[index].dataclass,
+			fsfiles[index].reg, single);
+	mutex_unlock(&di->lock);
+
+	if (ret < 0)
+		return ret;
+
+	mask = (single ? 0xFF : 0xFFFF);
+
+	ret = scnprintf(buf, sizeof(buf) - 1, "%u\n", (ret & mask));
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+}
+
+static ssize_t debugfs_show_ext_u8(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_show_ext_byteorword(fp, userbuf, count, offset, true);
+}
+
+static ssize_t debugfs_show_ext_u16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_show_ext_byteorword(fp, userbuf, count, offset, false);
+}
+
+static ssize_t debugfs_store_ext_byteorword(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset, bool single)
+{
+	int ret;
+	struct bq27xxx_device_info *di = fp->private_data;
+	u8 data[2] = {0, 0};
+	int index;
+	u32 dataout;
+
+	if (!di)
+		return -EIO;
+
+	ret = sscanf(userbuf, "%u", &dataout);
+	if (ret != 1 || dataout > 65535)
+		return -EINVAL;
+
+	data[0] = (dataout >> 8) & 0xFF;
+	data[1] = dataout & 0xFF;
+
+	index = get_fsfile_match(fp->f_path.dentry->d_iname);
+	if (index < 0)
+		return index;
+
+	dev_info(di->dev, "%s: \"%s\", dataclass %u offset %u\n", __func__,
+			fsfiles[index].name, fsfiles[index].dataclass, fsfiles[index].reg);
+
+	mutex_lock(&di->lock);
+	ret = config_mode_start(di);
+	if (ret < 0) {
+		mutex_unlock(&di->lock);
+		return ret;
+	}
+	ret = write_extended_byteorword(di, fsfiles[index].dataclass,
+			fsfiles[index].reg, data, single);
+	mutex_unlock(&di->lock);
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t debugfs_store_ext_u8(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_store_ext_byteorword(fp, userbuf, count, offset, true);
+}
+
+static ssize_t debugfs_store_ext_u16(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	return debugfs_store_ext_byteorword(fp, userbuf, count, offset, false);
 }
 
 static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
@@ -659,7 +792,7 @@ static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
 
 	index = get_fsfile_match(fp->f_path.dentry->d_iname);
 	if (index < 0)
-		return -EINVAL;
+		return index;
 
 	ret = read_word(di, fsfiles[index].reg);
 	if (ret < 0)
@@ -674,73 +807,52 @@ static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
 	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
 }
 
-static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
-		size_t count, loff_t *offset)
+static ssize_t debugfs_show_byteword(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset, bool hex, bool single)
 {
 	int ret;
 	struct bq27xxx_device_info *di = fp->private_data;
 	char buf[8] = {0};
 	int index;
 	u16 theword;
+	u16 mask = (single ? 0xFF : 0xFFFF);
 
 	if (!di)
 		return -EIO;
 
 	index = get_fsfile_match(fp->f_path.dentry->d_iname);
 	if (index < 0)
-		return -EINVAL;
+		return index;
 
-	ret = read_word(di, fsfiles[index].reg);
+	ret = di->bus.read(di, fsfiles[index].reg, single);
 	if (ret < 0)
 		return ret;
 
-	theword = (ret & 0xFFFF);
+	theword = (ret & mask);
 
-	ret = scnprintf(buf, sizeof(buf) - 1, "%u\n", theword);
+	ret = scnprintf(buf, sizeof(buf) - 1, hex ? "0x%02X\n" : "%u\n", theword);
 	if (ret < 0)
 		return ret;
 
 	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
 }
 
-static ssize_t debugfs_show_u8_mode(struct file *fp, char __user *userbuf,
-		size_t count, loff_t *offset, bool hex)
+static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
 {
-	int ret;
-	struct bq27xxx_device_info *di = fp->private_data;
-	char buf[8] = {0};
-	int index;
-	unsigned char thebyte;
-
-	if (!di)
-		return -EIO;
-
-	index = get_fsfile_match(fp->f_path.dentry->d_iname);
-	if (index < 0)
-		return -EINVAL;
-
-	ret = read_byte(di, fsfiles[index].reg);
-	if (ret < 0)
-		return ret;
-
-	thebyte = (ret & 0xFF);
-	ret = scnprintf(buf, sizeof(buf) - 1, hex ? "0x%02X\n" : "%u\n", thebyte);
-	if (ret < 0)
-		return ret;
-
-	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+	return debugfs_show_byteword(fp, userbuf, count, offset, false, false);
 }
 
 static ssize_t debugfs_show_u8(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset)
 {
-	return debugfs_show_u8_mode(fp, userbuf, count, offset, false);
+	return debugfs_show_byteword(fp, userbuf, count, offset, false, true);
 }
 
 static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset)
 {
-	return debugfs_show_u8_mode(fp, userbuf, count, offset, true);
+	return debugfs_show_byteword(fp, userbuf, count, offset, true, true);
 }
 
 static inline int get_gpiopol(struct bq27xxx_device_info *di)
@@ -770,7 +882,7 @@ static inline int set_gpiopol(struct bq27xxx_device_info *di, bool status)
 		return ret;
 	}
 
-	ret = read_extended_byte(di, 0x40, 0x00, 0);
+	ret = read_extended_byteorword(di, 0x40, 0, true);
 	if (ret < 0)
 		return ret;
 
@@ -781,7 +893,7 @@ static inline int set_gpiopol(struct bq27xxx_device_info *di, bool status)
 	else
 		opconfig1 = (old_opconfig1 & ~BQ27441_OPCONF_GPIOPOL);
 
-	ret = write_extended_byte(di, 0x40, 0x00, 0, opconfig1);
+	ret = write_extended_byteorword(di, 0x40, 0, &opconfig1, true);
 	if (ret < 0)
 		return ret;
 
@@ -867,7 +979,8 @@ static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 			S_IWUGO, di->dfs_dir, di, &polarity_fops);
 
 	for (i = 0; i < ARRAY_SIZE(fsfiles); i++) {
-		debugfs_create_file(fsfiles[i].name, S_IRUGO, di->dfs_dir, di, &fsfiles[i].fops);
+		debugfs_create_file(fsfiles[i].name, fsfiles[i].mode, di->dfs_dir,
+				di, &fsfiles[i].fops);
 	}
 
 	return 0;
@@ -922,6 +1035,7 @@ static int configure(struct bq27xxx_device_info *di)
 	int terminate_voltage;
 	int flags_lsb;
 	int i;
+	u8 version = CONFIG_VERSION;
 
 	flags_lsb = read_byte(di, BQ27441_FLAGS);
 
@@ -974,7 +1088,7 @@ static int configure(struct bq27xxx_device_info *di)
 			(flags_lsb & BQ27441_FLAGS_ITPOR),
 			checksum);
 
-	ret = write_extended_byte(di, 0x40, 0x00, 3, CONFIG_VERSION);
+	ret = write_extended_byteorword(di, 0x40, 3, &version, true);
 	if (ret < 0) {
 		dev_warn(di->dev, "Unable to write BQ27441_DM_CODE, ret %d\n", ret);
 		return ret;
