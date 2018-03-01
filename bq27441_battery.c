@@ -586,9 +586,11 @@ static inline int config_mode_stop(struct bq27xxx_device_info *di)
 	}
 
 	/* seal the fuel gauge */
+#if 0 /* fixme LIM: Re-enable in production code */
 	ret = control_write(di, BQ27441_SEALED);
 	if (ret < 0)
 		return ret;
+#endif
 
 	return 0;
 }
