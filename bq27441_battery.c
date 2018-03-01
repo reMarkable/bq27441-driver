@@ -80,7 +80,7 @@
 
 #define BQ27441_MAX_REGS 0x7F
 
-static struct bq27441_extended_cmd {
+struct bq27441_extended_cmd {
 	u8 datablock[2];
 	u8 command[32];
 	u8 checksum;
