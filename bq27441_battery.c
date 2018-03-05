@@ -692,9 +692,6 @@ static ssize_t debugfs_show_ext_byteorword(struct file *fp, char __user *userbuf
 	if (index < 0)
 		return index;
 
-	dev_info(di->dev, "%s: \"%s\", dataclass %u offset %u\n", __func__,
-			fsfiles[index].name, fsfiles[index].dataclass, fsfiles[index].reg);
-
 	mutex_lock(&di->lock);
 	ret = read_extended_byteorword(di, fsfiles[index].dataclass,
 			fsfiles[index].reg, single);
@@ -746,9 +743,6 @@ static ssize_t debugfs_store_ext_byteorword(struct file *fp, const char __user *
 	index = get_fsfile_match(fp->f_path.dentry->d_iname);
 	if (index < 0)
 		return index;
-
-	dev_info(di->dev, "%s: \"%s\", dataclass %u offset %u\n", __func__,
-			fsfiles[index].name, fsfiles[index].dataclass, fsfiles[index].reg);
 
 	mutex_lock(&di->lock);
 	ret = config_mode_start(di);
