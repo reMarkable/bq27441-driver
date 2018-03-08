@@ -737,8 +737,12 @@ static ssize_t debugfs_store_ext_byteorword(struct file *fp, const char __user *
 	if (ret != 1 || dataout > 65535)
 		return -EINVAL;
 
-	data[0] = (dataout >> 8) & 0xFF;
-	data[1] = dataout & 0xFF;
+	if (single)
+		data[0] = dataout & 0xFF;
+	else {
+		data[0] = (dataout >> 8) & 0xFF;
+		data[1] = dataout & 0xFF;
+	}
 
 	index = get_fsfile_match(fp->f_path.dentry->d_iname);
 	if (index < 0)
