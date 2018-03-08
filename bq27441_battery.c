@@ -658,7 +658,7 @@ static const struct fsfile fsfiles[] = {
 		{.name = "DMCode",             .reg =  3, .dataclass = 64, FSFOPS_RW(debugfs_show_ext_u8, debugfs_store_ext_u8)},
 		{.name = "MinDeltaVoltage",    .reg = 72, .dataclass = 80, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
 		{.name = "MaxDeltaVoltage",    .reg = 74, .dataclass = 80, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
-		{.name = "QMaxCell0",          .reg =  0, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
+		{.name = "QMaxCell0",          .reg =  0, .dataclass = 82, FSFOPS_R(debugfs_show_ext_u16)},
 		{.name = "TerminateVoltage",   .reg = 16, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
 		{.name = "VatChgTerm",         .reg = 33, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
 		{.name = "DeltaVoltage",       .reg = 39, .dataclass = 82, FSFOPS_R(debugfs_show_ext_u16)},
