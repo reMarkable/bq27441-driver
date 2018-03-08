@@ -13,6 +13,7 @@
 #include "bq27xxx_battery.h"
 
 #define CONFIG_VERSION 7
+#define CONFIG_VERSION_FACTORY_RESET 0xFF
 
 #define BQ27441_CONTROL_STATUS  0x0000
 #define BQ27441_DEVICE_TYPE     0x0001
@@ -625,6 +626,14 @@ static ssize_t debugfs_show_ext_u8(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset);
 static ssize_t debugfs_store_ext_u8(struct file *fp, const char __user *userbuf,
 		size_t count, loff_t *offset);
+static ssize_t debugfs_polarity_show(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_polarity_store(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_factoryforce_show(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset);
+static ssize_t debugfs_factoryforce_store(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset);
 
 static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset);
@@ -662,6 +671,8 @@ static const struct fsfile fsfiles[] = {
 		{.name = "TerminateVoltage",   .reg = 16, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
 		{.name = "VatChgTerm",         .reg = 33, .dataclass = 82, FSFOPS_RW(debugfs_show_ext_u16, debugfs_store_ext_u16)},
 		{.name = "DeltaVoltage",       .reg = 39, .dataclass = 82, FSFOPS_R(debugfs_show_ext_u16)},
+		{.name = "ForceFactoryConfig", .reg =  0, .dataclass =  0, FSFOPS_RW(debugfs_factoryforce_show, debugfs_factoryforce_store)},
+		{.name = "lowBat_polarity",    .reg =  0, .dataclass =  0, FSFOPS_RW(debugfs_polarity_show, debugfs_polarity_store)},
 };
 
 inline static int get_fsfile_match(const char *name)
@@ -853,6 +864,98 @@ static ssize_t debugfs_show_u8hex(struct file *fp, char __user *userbuf,
 	return debugfs_show_byteword(fp, userbuf, count, offset, true, true);
 }
 
+static int configure(struct bq27xxx_device_info *di);
+
+static int factory_reset(struct bq27xxx_device_info *di)
+{
+	int ret;
+	const u8 data = CONFIG_VERSION_FACTORY_RESET;
+
+	ret = control_write(di, BQ27441_RESET);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to hard reset, ret %d\n", ret);
+		return ret;
+	}
+	usleep_range(10000, 20000);
+
+	ret = config_mode_start(di);
+	if (ret < 0) {
+		dev_warn(di->dev, "Unable to start config mode, ret %d\n", ret);
+		return ret;
+	}
+
+	ret = write_extended_byteorword(di, 64, 3, &data, true);
+	if (ret < 0)
+		return ret;
+
+	ret = config_mode_stop(di);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static ssize_t debugfs_factoryforce_store(struct file *fp, const char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	int ret;
+	bool factoryforce;
+	struct bq27xxx_device_info *di = fp->private_data;
+
+	if (!di)
+		return -EIO;
+
+	if (count < 1)
+		return -EINVAL;
+
+	if (userbuf[0] == '1')
+		factoryforce = true;
+	else if (userbuf[0] == '0')
+		factoryforce = false;
+	else
+		return -EINVAL;
+
+	mutex_lock(&di->lock);
+	if (factoryforce)
+		ret = factory_reset(di);
+	else
+		ret = configure(di);
+	mutex_unlock(&di->lock);
+
+	if (ret >= 0)
+		return count;
+	else
+		return ret;
+}
+
+static ssize_t debugfs_factoryforce_show(struct file *fp, char __user *userbuf,
+		size_t count, loff_t *offset)
+{
+	int ret;
+	u8 dmcode;
+	struct bq27xxx_device_info *di = fp->private_data;
+	char buf[4] = {0};
+
+	if (!di)
+		return -EIO;
+
+	mutex_lock(&di->lock);
+	ret = control_read(di, BQ27441_DM_CODE);
+	mutex_unlock(&di->lock);
+
+	if (ret < 0)
+		return ret;
+
+	dmcode = (ret & 0xff);
+
+	ret = scnprintf(buf, sizeof(buf) - 1, "%c\n",
+			(dmcode == CONFIG_VERSION_FACTORY_RESET) ? '1' : '0');
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
+}
+
 static inline int get_gpiopol(struct bq27xxx_device_info *di)
 {
 	int ret;
@@ -902,7 +1005,7 @@ static inline int set_gpiopol(struct bq27xxx_device_info *di, bool status)
 	return 0;
 }
 
-static ssize_t polarity_debugfs_store(struct file *fp, const char __user *userbuf,
+static ssize_t debugfs_polarity_store(struct file *fp, const char __user *userbuf,
 		size_t count, loff_t *offset)
 {
 	int ret;
@@ -932,7 +1035,7 @@ static ssize_t polarity_debugfs_store(struct file *fp, const char __user *userbu
 		return ret;
 }
 
-static ssize_t polarity_debugfs_show(struct file *fp, char __user *userbuf,
+static ssize_t debugfs_polarity_show(struct file *fp, char __user *userbuf,
 		size_t count, loff_t *offset)
 {
 	int ret;
@@ -961,20 +1064,11 @@ static ssize_t polarity_debugfs_show(struct file *fp, char __user *userbuf,
 	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
 }
 
-static const struct file_operations polarity_fops = {
-		.open = simple_open,
-		.write = polarity_debugfs_store,
-		.read = polarity_debugfs_show,
-		.owner = THIS_MODULE,
-};
-
 static int bq27441_create_debugfs(struct bq27xxx_device_info *di)
 {
 	int i;
 
 	di->dfs_dir = debugfs_create_dir("bq27441", NULL);
-	di->dfs_polarity_file = debugfs_create_file("lowBat_polarity",
-			S_IWUGO, di->dfs_dir, di, &polarity_fops);
 
 	for (i = 0; i < ARRAY_SIZE(fsfiles); i++) {
 		debugfs_create_file(fsfiles[i].name, fsfiles[i].mode, di->dfs_dir,
@@ -1108,6 +1202,7 @@ int bq27441_init(struct bq27xxx_device_info *di)
 {
 	int ret;
 	bool itpor;
+	u8 dmcode;
 
 	mutex_lock(&di->lock);
 
@@ -1133,11 +1228,13 @@ int bq27441_init(struct bq27xxx_device_info *di)
 		dev_warn(di->dev, "Unable to read BQ27441_DM_CODE, ret %d\n", ret);
 		goto done;
 	}
-	dev_info(di->dev, "Configuration version %d\n", ret);
+	dmcode = (ret & 0xff);
+	dev_info(di->dev, "Configuration version %u\n", dmcode);
 
-	if ((ret & 0xff) != CONFIG_VERSION || itpor) {
+	if (dmcode == CONFIG_VERSION_FACTORY_RESET)
+		goto done;
+	else if (dmcode != CONFIG_VERSION || itpor)
 		ret = configure(di);
-	}
 
 done:
 	mutex_unlock(&di->lock);
