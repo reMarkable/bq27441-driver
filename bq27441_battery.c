@@ -717,7 +717,7 @@ static ssize_t debugfs_show_ext_byteorword(struct file *fp, char __user *userbuf
 	if (ret < 0)
 		return ret;
 
-	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
 }
 
 static ssize_t debugfs_show_ext_u8(struct file *fp, char __user *userbuf,
@@ -813,7 +813,7 @@ static ssize_t debugfs_show_s16(struct file *fp, char __user *userbuf,
 	if (ret < 0)
 		return ret;
 
-	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
 }
 
 static ssize_t debugfs_show_byteword(struct file *fp, char __user *userbuf,
@@ -843,7 +843,7 @@ static ssize_t debugfs_show_byteword(struct file *fp, char __user *userbuf,
 	if (ret < 0)
 		return ret;
 
-	return simple_read_from_buffer(userbuf, count, offset, buf, ret + 1);
+	return simple_read_from_buffer(userbuf, count, offset, buf, ret);
 }
 
 static ssize_t debugfs_show_u16(struct file *fp, char __user *userbuf,
